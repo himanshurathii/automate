@@ -1,0 +1,27 @@
+{
+  "name": "indiamart-lead-automation",
+  "version": "1.0.0",
+  "description": "Automated pipeline for collecting, storing, notifying and exporting IndiaMART leads.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "db:push": "prisma db push --schema=src/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema=src/prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.12.1",
+    "axios": "^1.6.8",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0",
+    "nodemailer": "^6.9.13",
+    "twilio": "^5.0.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0",
+    "prisma": "^5.12.1"
+  }
+}

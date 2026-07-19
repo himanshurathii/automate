@@ -1,0 +1,83 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model LeadRaw {
+  id              Int      @id @default(autoincrement())
+  indiamartLeadId String   @unique
+  source          String   // 'push' | 'pull_backfill'
+  rawPayload      String   // SQLite JSON string
+  receivedAt      DateTime @default(now())
+  normalizedLead  Lead?
+}
+
+model Lead {
+  id              Int               @id @default(autoincrement())
+  rawId           Int?              @unique
+  raw             LeadRaw?          @relation(fields: [rawId], references: [id])
+  indiamartLeadId String            @unique
+  buyerName       String?
+  companyName     String?
+  phone           String?
+  email           String?
+  city            String?
+  state           String?
+  product         String?
+  quantity        String?
+  message         String?
+  priority        String            @default("medium") // 'high' | 'medium' | 'low'
+  status          String            @default("new")    // new | contacted | follow_up | closed | rejected
+  isDuplicateOfId Int?
+  duplicateOf     Lead?             @relation("LeadDuplicates", fields: [isDuplicateOfId], references: [id])
+  duplicates      Lead[]            @relation("LeadDuplicates")
+  claimedBy       String?
+  claimedAt       DateTime?
+  aiSummary       String?
+  suggestedReply  String?
+  delayed         Boolean           @default(false)    // true if came via pull_backfill after a push miss
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  notes           LeadNote[]
+  notifications   NotificationLog[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([phone])
+  @@index([createdAt])
+}
+
+model LeadNote {
+  id        Int      @id @default(autoincrement())
+  leadId    Int
+  lead      Lead     @relation(fields: [leadId], references: [id])
+  author    String?
+  note      String?
+  createdAt DateTime @default(now())
+}
+
+model NotificationLog {
+  id                Int      @id @default(autoincrement())
+  leadId            Int
+  lead              Lead     @relation(fields: [leadId], references: [id])
+  channel           String   // whatsapp | telegram | sms | email
+  status            String   // sent | failed | delivered
+  attemptNo         Int      @default(1)
+  error             String?
+  providerMessageId String?
+  sentAt            DateTime @default(now())
+}
+
+model PriorityRule {
+  id       Int     @id @default(autoincrement())
+  ruleName String?
+  field    String? // e.g. 'product', 'city', 'quantity'
+  operator String? // 'contains' | 'equals' | 'gte' | 'in'
+  value    String?
+  weight   Int?
+  active   Boolean @default(true)
+}
