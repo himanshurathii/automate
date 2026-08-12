@@ -1,5 +1,27 @@
 const prisma = require('../services/database');
 
+let cachedRules = null;
+let lastCacheTime = 0;
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds cache TTL
+
+function clearRulesCache() {
+  cachedRules = null;
+  lastCacheTime = 0;
+}
+
+async function getActiveRules() {
+  const now = Date.now();
+  if (cachedRules && (now - lastCacheTime < CACHE_TTL_MS)) {
+    return cachedRules;
+  }
+
+  cachedRules = await prisma.priorityRule.findMany({
+    where: { active: true }
+  });
+  lastCacheTime = now;
+  return cachedRules;
+}
+
 /**
  * Calculates priority based on active database rules
  * @param {Object} leadData - The lead object containing fields like product, city, quantity, etc.
@@ -7,10 +29,8 @@ const prisma = require('../services/database');
  */
 async function calculatePriority(leadData) {
   try {
-    // 1. Fetch active rules
-    const rules = await prisma.priorityRule.findMany({
-      where: { active: true }
-    });
+    // 1. Fetch active rules (uses in-memory cache)
+    const rules = await getActiveRules();
 
     if (rules.length === 0) {
       return 'medium'; // Default priority
@@ -82,5 +102,6 @@ async function calculatePriority(leadData) {
 }
 
 module.exports = {
-  calculatePriority
+  calculatePriority,
+  clearRulesCache
 };

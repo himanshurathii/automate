@@ -70,18 +70,26 @@ class EmailSMTP extends BaseChannel {
     `;
 
     if (!this.isConfigured()) {
-      // Print to console if not configured
-      console.log(`\n--- [MOCK EMAIL SEND] ---`);
-      console.log(`To: ${recipient || 'Not Configured'}`);
-      console.log(`Subject: ${subject}`);
-      console.log(`Body (Plain Text):`);
-      console.log(messageText);
-      console.log(`-------------------------\n`);
+      if (process.env.NODE_ENV !== 'production') {
+        // Print to console if not configured in dev mode
+        console.log(`\n--- [MOCK EMAIL SEND] ---`);
+        console.log(`To: ${recipient || 'Not Configured'}`);
+        console.log(`Subject: ${subject}`);
+        console.log(`Body (Plain Text):`);
+        console.log(messageText);
+        console.log(`-------------------------\n`);
+        return {
+          success: true,
+          channelName: this.name,
+          error: 'Mock mode: SMTP credentials missing (dev only)',
+          providerMessageId: 'mock-smtp-id-' + Math.floor(Math.random() * 1000000)
+        };
+      }
       return {
-        success: true,
+        success: false,
         channelName: this.name,
-        error: 'Mock mode: SMTP credentials missing',
-        providerMessageId: 'mock-smtp-id-' + Math.floor(Math.random() * 1000000)
+        error: 'SMTP credentials not configured',
+        providerMessageId: null
       };
     }
 

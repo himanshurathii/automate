@@ -104,7 +104,8 @@ async function receiveWebhook(req, res, next) {
     const payload = req.body;
     console.log('Received push webhook from IndiaMART:', JSON.stringify(payload));
 
-    const uniqueQueryId = (payload?.UNIQUE_QUERY_ID || payload?.QUERY_ID || payload?.id)?.toString();
+    const leadData = payload?.RESPONSE || payload;
+    const uniqueQueryId = (leadData?.UNIQUE_QUERY_ID || leadData?.QUERY_ID || leadData?.id)?.toString();
     if (!uniqueQueryId) {
       return res.status(400).json({
         success: false,
@@ -125,13 +126,24 @@ async function receiveWebhook(req, res, next) {
     }
 
     // 3. Create raw record immediately in the DB to block duplicate retries
-    await prisma.leadRaw.create({
-      data: {
-        indiamartLeadId: uniqueQueryId,
-        source: 'push',
-        rawPayload: JSON.stringify(payload)
+    try {
+      await prisma.leadRaw.create({
+        data: {
+          indiamartLeadId: uniqueQueryId,
+          source: 'push',
+          rawPayload: JSON.stringify(payload)
+        }
+      });
+    } catch (err) {
+      if (err.code === 'P2002') {
+        console.log(`[Webhook] Race-condition duplicate for lead ${uniqueQueryId}, safe to ignore.`);
+        return res.status(200).json({
+          success: true,
+          message: 'Duplicate (race), skipped.'
+        });
       }
-    });
+      throw err;
+    }
 
     // 4. Trigger full processing + scoring + notifications in the background (fire-and-forget)
     processIncomingLead(payload, 'push').catch((err) => {

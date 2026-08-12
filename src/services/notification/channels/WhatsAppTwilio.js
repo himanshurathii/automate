@@ -22,16 +22,24 @@ class WhatsAppTwilio extends BaseChannel {
     const messageText = this.formatMessage(payload);
     
     if (!this.isConfigured()) {
-      // If not configured, we print to console as fallback mock
-      console.log(`\n--- [MOCK TWILIO WHATSAPP SEND] ---`);
-      console.log(`To: ${recipient || 'Not Configured'}`);
-      console.log(messageText);
-      console.log(`-----------------------------------\n`);
+      if (process.env.NODE_ENV !== 'production') {
+        // If not configured, we print to console as fallback mock in dev
+        console.log(`\n--- [MOCK TWILIO WHATSAPP SEND] ---`);
+        console.log(`To: ${recipient || 'Not Configured'}`);
+        console.log(messageText);
+        console.log(`-----------------------------------\n`);
+        return {
+          success: true,
+          channelName: this.name,
+          error: 'Mock mode: Twilio credentials missing (dev only)',
+          providerMessageId: 'mock-twilio-id-' + Math.floor(Math.random() * 1000000)
+        };
+      }
       return {
-        success: true,
+        success: false,
         channelName: this.name,
-        error: 'Mock mode: Twilio credentials missing',
-        providerMessageId: 'mock-twilio-id-' + Math.floor(Math.random() * 1000000)
+        error: 'Twilio WhatsApp credentials not configured',
+        providerMessageId: null
       };
     }
 

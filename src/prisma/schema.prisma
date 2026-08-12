@@ -1,5 +1,7 @@
+// Production Setup: For PostgreSQL (Supabase, Neon, AWS RDS), change provider to "postgresql"
+// and set DATABASE_URL="postgresql://user:password@host:5432/dbname" in .env
 datasource db {
-  provider = "sqlite"
+  provider = "sqlite" // Change to "postgresql" when deploying to production
   url      = env("DATABASE_URL")
 }
 
@@ -80,4 +82,10 @@ model PriorityRule {
   value    String?
   weight   Int?
   active   Boolean @default(true)
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

@@ -13,20 +13,24 @@ const BASE_URL = 'http://localhost:3000/api/leads';
 // Generate a random unique query ID
 const uniqueId = 'TEST-' + Math.floor(1000000000 + Math.random() * 9000000000);
 
-// Mock IndiaMART Webhook Payload
+// Mock IndiaMART Webhook Payload (matching IndiaMART Push API RESPONSE envelope format)
 const mockPayload = {
-  UNIQUE_QUERY_ID: uniqueId,
-  QUERY_TYPE: 'B',
-  QUERY_TIME: new Date().toISOString(),
-  SENDER_NAME: 'John Doe',
-  SENDER_MOBILE: '+919876543210',
-  SENDER_EMAIL: 'johndoe@example.com',
-  SENDER_COMPANY: 'Acme Corporates',
-  SENDER_CITY: 'Mumbai',
-  SENDER_STATE: 'Maharashtra',
-  QUERY_PRODUCT_NAME: 'Solar Panels',
-  QUERY_MESSAGE: 'Need bulk inquiry of 500 solar panels for commercial project.',
-  QUERY_MESSAGE_QUANTITY: '500 pcs'
+  CODE: 200,
+  STATUS: 'SUCCESS',
+  RESPONSE: {
+    UNIQUE_QUERY_ID: uniqueId,
+    QUERY_TYPE: 'B',
+    QUERY_TIME: new Date().toISOString(),
+    SENDER_NAME: 'John Doe',
+    SENDER_MOBILE: '+919876543210',
+    SENDER_EMAIL: 'johndoe@example.com',
+    SENDER_COMPANY: 'Acme Corporates',
+    SENDER_CITY: 'Mumbai',
+    SENDER_STATE: 'Maharashtra',
+    QUERY_PRODUCT_NAME: 'Solar Panels',
+    QUERY_MESSAGE: 'Need bulk inquiry of 500 solar panels for commercial project.',
+    QUERY_MESSAGE_QUANTITY: '500 pcs'
+  }
 };
 
 async function runTest() {

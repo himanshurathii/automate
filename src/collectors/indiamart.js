@@ -7,7 +7,7 @@ const { sendLeadNotification } = require('../services/notification');
 const INDIAMART_PULL_URL = 'https://mapi.indiamart.com/wservce/crm/crmListing/v2/';
 
 /**
- * Format date in DD-Mon-YYYYHH:MM:SS format for IndiaMART API (IST)
+ * Format date in DD-Mon-YYYYHH:MM:SS format for IndiaMART API (IST) (NO space between date and time)
  */
 function formatDate(date) {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -18,7 +18,40 @@ function formatDate(date) {
   const minutes = String(date.getMinutes()).padStart(2, '0');
   const seconds = String(date.getSeconds()).padStart(2, '0');
 
-  return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
+  return `${day}-${month}-${year}${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Read last successful pull end time from DB SystemSetting
+ */
+async function getLastPullEndTime() {
+  try {
+    const setting = await prisma.systemSetting.findUnique({
+      where: { key: 'last_pull_end_time' }
+    });
+    if (setting && setting.value) {
+      const date = new Date(setting.value);
+      if (!isNaN(date.getTime())) return date;
+    }
+  } catch (err) {
+    console.warn('[Collector] Failed to read last_pull_end_time setting:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Save last successful pull end time to DB SystemSetting
+ */
+async function setLastPullEndTime(date) {
+  try {
+    await prisma.systemSetting.upsert({
+      where: { key: 'last_pull_end_time' },
+      update: { value: date.toISOString() },
+      create: { key: 'last_pull_end_time', value: date.toISOString() }
+    });
+  } catch (err) {
+    console.warn('[Collector] Failed to update last_pull_end_time setting:', err.message);
+  }
 }
 
 /**
@@ -55,7 +88,8 @@ async function detectDuplicate(phone, product) {
  * Process a lead payload (from pull collector or webhook push).
  * Saves to LeadRaw and processes into Lead.
  */
-async function processIncomingLead(rawLead, source = 'push') {
+async function processIncomingLead(rawLeadEnvelope, source = 'push') {
+  const rawLead = rawLeadEnvelope?.RESPONSE || rawLeadEnvelope;
   const uniqueQueryId = (rawLead.UNIQUE_QUERY_ID || rawLead.QUERY_ID || rawLead.id)?.toString();
   if (!uniqueQueryId) {
     throw new Error('UNIQUE_QUERY_ID/QUERY_ID/id is missing from lead payload.');
@@ -81,7 +115,7 @@ async function processIncomingLead(rawLead, source = 'push') {
       data: {
         indiamartLeadId: uniqueQueryId,
         source,
-        rawPayload: JSON.stringify(rawLead)
+        rawPayload: JSON.stringify(rawLeadEnvelope)
       }
     });
   }
@@ -164,10 +198,16 @@ async function processIncomingLead(rawLead, source = 'push') {
     console.log(`Lead ${uniqueQueryId} flagged as duplicate of Lead ID ${duplicateOfId}. Notification skipped.`);
   }
 
-  // 8. Trigger AI follow-up asynchronously in the background (decoupled)
-  generateAiFollowUp(newLead.id).catch(err => {
-    console.error(`Failed to trigger AI follow-up for lead ${newLead.id}:`, err);
-  });
+  // 8. AI follow-up is DISABLED for now — generateAiFollowUp() currently only
+  // returns a canned/templated string, not a real AI-generated summary, so we
+  // don't want it firing a second WhatsApp/Email message yet. Re-enable this
+  // once a real LLM provider (OpenAI/Gemini/Claude) is wired into
+  // generateAiFollowUp() below. To re-enable, uncomment the block below —
+  // no other changes needed, it's already fully decoupled from the fast-path.
+  //
+  // generateAiFollowUp(newLead.id).catch(err => {
+  //   console.error(`Failed to trigger AI follow-up for lead ${newLead.id}:`, err);
+  // });
 
   return { lead: newLead, isNew: true };
 }
@@ -234,19 +274,56 @@ async function collectLeads() {
 
   try {
     const endTime = new Date();
-    const startTime = new Date();
-    startTime.setHours(startTime.getHours() - 24); // Pull past 24 hours
+    const lastSuccessfulEndTime = await getLastPullEndTime();
+    let startTime;
 
-    const url = `${INDIAMART_PULL_URL}?glusr_crm_key=${apiKey}&start_time=${formatDate(startTime)}&end_time=${formatDate(endTime)}`;
-    console.log(`Polling IndiaMART Pull API: ${url.replace(apiKey, 'SECRET_KEY')}`);
+    if (!lastSuccessfulEndTime) {
+      // First run ever — backfill past 24 hours
+      startTime = new Date(endTime);
+      startTime.setHours(startTime.getHours() - 24);
+      console.log('[Pull API] Initial run or no saved pull state. Requesting past 24h backfill.');
+    } else {
+      // Rolling overlap of 5 minutes prior to last successful pull per IndiaMART Strategy 2
+      startTime = new Date(lastSuccessfulEndTime);
+      startTime.setMinutes(startTime.getMinutes() - 5);
+      console.log(`[Pull API] Requesting incremental window starting from last pull (${lastSuccessfulEndTime.toISOString()}) - 5m overlap.`);
+    }
+
+    const params = new URLSearchParams({
+      glusr_crm_key: apiKey,
+      start_time: formatDate(startTime),
+      end_time: formatDate(endTime)
+    });
+
+    const url = `${INDIAMART_PULL_URL}?${params.toString()}`;
+    const safeLogUrl = `${INDIAMART_PULL_URL}?${new URLSearchParams({ glusr_crm_key: 'SECRET_KEY', start_time: formatDate(startTime), end_time: formatDate(endTime) }).toString()}`;
+    console.log(`Polling IndiaMART Pull API: ${safeLogUrl}`);
 
     const response = await axios.get(url);
     const apiData = response.data;
 
-    // Handle standard IndiaMART response structure
-    // IndiaMART API returns: { STATUS: "SUCCESS", RESPONSE: [ { UNIQUE_QUERY_ID: ... }, ... ] }
+    // Handle IndiaMART API response codes and messages
+    const code = apiData?.CODE || (apiData?.STATUS === 'SUCCESS' ? 200 : parseInt(apiData?.STATUS) || null);
+    const message = apiData?.MESSAGE || (typeof apiData?.RESPONSE === 'string' ? apiData.RESPONSE : null);
+
+    if (code === 204 || apiData?.STATUS === '204') {
+      console.log('[Pull API] No new leads in this window (HTTP 204).');
+      await setLastPullEndTime(endTime);
+      return { count: 0, newLeads: 0, source: 'indiamart' };
+    }
+
+    if (code === 401 || apiData?.STATUS === '401') {
+      console.error(`[Pull API] CRITICAL: Key invalid or expired (HTTP 401): ${message}. Reconciliation backup is DOWN.`);
+      return { count: 0, newLeads: 0, source: 'indiamart', error: `[CRITICAL] Key Invalid/Expired (401): ${message}` };
+    }
+
+    if (code === 429 || apiData?.STATUS === '429') {
+      console.warn(`[Pull API] Rate limited by IndiaMART (HTTP 429): ${message}. Retrying next scheduled cycle.`);
+      return { count: 0, newLeads: 0, source: 'indiamart', error: `Rate limited (429): ${message}` };
+    }
+
     if (!apiData || apiData.STATUS !== 'SUCCESS' || !Array.isArray(apiData.RESPONSE)) {
-      const errorMsg = apiData?.RESPONSE?.MESSAGE || JSON.stringify(apiData);
+      const errorMsg = message || JSON.stringify(apiData);
       console.warn('IndiaMART Pull API returned empty or unsuccessful response:', errorMsg);
       return { count: 0, newLeads: 0, source: 'indiamart', error: errorMsg };
     }
@@ -259,6 +336,9 @@ async function collectLeads() {
       const result = await processIncomingLead(rawLead, 'pull_backfill');
       if (result.isNew) newLeadsCount++;
     }
+
+    // Persist last successful pull end time
+    await setLastPullEndTime(endTime);
 
     return { count: leadsList.length, newLeads: newLeadsCount, source: 'indiamart' };
   } catch (error) {
