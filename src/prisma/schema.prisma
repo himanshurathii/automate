@@ -29,6 +29,7 @@ model Lead {
   email           String?
   city            String?
   state           String?
+  country         String?
   product         String?
   quantity        String?
   message         String?
