@@ -1,7 +1,10 @@
-const prisma = require('../services/database');
-const { collectLeads, processIncomingLead } = require('../collectors/indiamart');
-const { generateLeadsExcel } = require('../services/excel');
-const { sendLeadNotification } = require('../services/notification');
+const prisma = require("../services/database");
+const {
+  collectLeads,
+  processIncomingLead,
+} = require("../collectors/indiamart");
+const { generateLeadsExcel } = require("../services/excel");
+const { sendLeadNotification } = require("../services/notification");
 
 /**
  * GET /api/leads - Retrieve paginated and filtered leads list
@@ -16,8 +19,8 @@ async function getLeads(req, res, next) {
       phone,
       page = 1,
       limit = 10,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
+      sortBy = "createdAt",
+      sortOrder = "desc",
     } = req.query;
 
     const pageNum = parseInt(page);
@@ -43,17 +46,17 @@ async function getLeads(req, res, next) {
         skip,
         take: limitNum,
         orderBy: {
-          [sortBy]: sortOrder
+          [sortBy]: sortOrder,
         },
         include: {
           notes: true,
           notifications: true,
           duplicateOf: {
-            select: { id: true, indiamartLeadId: true, buyerName: true }
-          }
-        }
+            select: { id: true, indiamartLeadId: true, buyerName: true },
+          },
+        },
       }),
-      prisma.lead.count({ where })
+      prisma.lead.count({ where }),
     ]);
 
     return res.status(200).json({
@@ -63,8 +66,8 @@ async function getLeads(req, res, next) {
         total,
         page: pageNum,
         limit: limitNum,
-        totalPages: Math.ceil(total / limitNum)
-      }
+        totalPages: Math.ceil(total / limitNum),
+      },
     });
   } catch (error) {
     next(error);
@@ -76,12 +79,26 @@ async function getLeads(req, res, next) {
  */
 async function triggerCollection(req, res, next) {
   try {
-    console.log('Manual collection triggered via HTTP endpoint.');
+    console.log("Manual collection triggered via HTTP endpoint.");
     const result = await collectLeads();
+
+    // collectLeads() resolves normally even on failure (missing/invalid API key,
+    // rate limiting, upstream errors) — it signals failure via a truthy `error`
+    // field on the result rather than throwing. Check for that explicitly, or a
+    // caller hitting this endpoint (e.g. a monitoring script) would see
+    // `200 success: true` while Pull API reconciliation is actually broken.
+    if (result?.error) {
+      return res.status(502).json({
+        success: false,
+        message: "IndiaMART pull collection failed.",
+        details: result,
+      });
+    }
+
     return res.status(200).json({
       success: true,
-      message: 'IndiaMART pull collection completed successfully.',
-      details: result
+      message: "IndiaMART pull collection completed successfully.",
+      details: result,
     });
   } catch (error) {
     next(error);
@@ -94,34 +111,45 @@ async function triggerCollection(req, res, next) {
 async function receiveWebhook(req, res, next) {
   try {
     // 1. Webhook Secret Key validation
-    const providedKey = req.query.key || req.headers['x-webhook-key'];
+    const providedKey = req.query.key || req.headers["x-webhook-key"];
     const expectedKey = process.env.INDIAMART_WEBHOOK_SECRET;
     if (expectedKey && providedKey !== expectedKey) {
-      console.warn('[Webhook] Rejected webhook call with invalid key.');
-      return res.status(401).json({ success: false, message: 'Unauthorized key.' });
+      console.warn("[Webhook] Rejected webhook call with invalid key.");
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized key." });
     }
 
     const payload = req.body;
-    console.log('Received push webhook from IndiaMART:', JSON.stringify(payload));
+    console.log(
+      "Received push webhook from IndiaMART:",
+      JSON.stringify(payload),
+    );
 
     const leadData = payload?.RESPONSE || payload;
-    const uniqueQueryId = (leadData?.UNIQUE_QUERY_ID || leadData?.QUERY_ID || leadData?.id)?.toString();
+    const uniqueQueryId = (
+      leadData?.UNIQUE_QUERY_ID ||
+      leadData?.QUERY_ID ||
+      leadData?.id
+    )?.toString();
     if (!uniqueQueryId) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid payload. UNIQUE_QUERY_ID/QUERY_ID/id is required.'
+        message: "Invalid payload. UNIQUE_QUERY_ID/QUERY_ID/id is required.",
       });
     }
 
     // 2. Fast-path Idempotency check: check if raw lead already exists in DB
     const existingRaw = await prisma.leadRaw.findUnique({
-      where: { indiamartLeadId: uniqueQueryId }
+      where: { indiamartLeadId: uniqueQueryId },
     });
     if (existingRaw) {
-      console.log(`[Webhook] Duplicate webhook delivery for lead ${uniqueQueryId}, ignoring.`);
+      console.log(
+        `[Webhook] Duplicate webhook delivery for lead ${uniqueQueryId}, ignoring.`,
+      );
       return res.status(200).json({
         success: true,
-        message: 'Duplicate webhook delivery, skipped.'
+        message: "Duplicate webhook delivery, skipped.",
       });
     }
 
@@ -130,30 +158,35 @@ async function receiveWebhook(req, res, next) {
       await prisma.leadRaw.create({
         data: {
           indiamartLeadId: uniqueQueryId,
-          source: 'push',
-          rawPayload: JSON.stringify(payload)
-        }
+          source: "push",
+          rawPayload: JSON.stringify(payload),
+        },
       });
     } catch (err) {
-      if (err.code === 'P2002') {
-        console.log(`[Webhook] Race-condition duplicate for lead ${uniqueQueryId}, safe to ignore.`);
+      if (err.code === "P2002") {
+        console.log(
+          `[Webhook] Race-condition duplicate for lead ${uniqueQueryId}, safe to ignore.`,
+        );
         return res.status(200).json({
           success: true,
-          message: 'Duplicate (race), skipped.'
+          message: "Duplicate (race), skipped.",
         });
       }
       throw err;
     }
 
     // 4. Trigger full processing + scoring + notifications in the background (fire-and-forget)
-    processIncomingLead(payload, 'push').catch((err) => {
-      console.error(`[Webhook] Background processing failed for lead ${uniqueQueryId}:`, err.message);
+    processIncomingLead(payload, "push").catch((err) => {
+      console.error(
+        `[Webhook] Background processing failed for lead ${uniqueQueryId}:`,
+        err.message,
+      );
     });
 
     // 5. Ack HTTP 200 immediately to prevent client timeouts
     return res.status(200).json({
       success: true,
-      message: 'Webhook payload received and queued for processing.'
+      message: "Webhook payload received and queued for processing.",
     });
   } catch (error) {
     next(error);
@@ -175,16 +208,19 @@ async function exportLeads(req, res, next) {
 
     const leads = await prisma.lead.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      include: { raw: true }
+      orderBy: { createdAt: "desc" },
+      include: { raw: true },
     });
 
     const buffer = await generateLeadsExcel(leads);
 
-    const filename = `indiamart_leads_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}.xlsx`;
+    const filename = `indiamart_leads_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${new Date().toTimeString().slice(0, 8).replace(/:/g, "")}.xlsx`;
 
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
     res.send(buffer);
   } catch (error) {
     next(error);
@@ -199,22 +235,28 @@ async function updateStatus(req, res, next) {
     const { id } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ['new', 'contacted', 'follow_up', 'closed', 'rejected'];
+    const validStatuses = [
+      "new",
+      "contacted",
+      "follow_up",
+      "closed",
+      "rejected",
+    ];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+        message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
       });
     }
 
     const updatedLead = await prisma.lead.update({
       where: { id: parseInt(id) },
-      data: { status }
+      data: { status },
     });
 
     return res.status(200).json({
       success: true,
-      lead: updatedLead
+      lead: updatedLead,
     });
   } catch (error) {
     next(error);
@@ -232,7 +274,7 @@ async function claimLead(req, res, next) {
     if (!claimedBy) {
       return res.status(400).json({
         success: false,
-        message: 'claimedBy is required.'
+        message: "claimedBy is required.",
       });
     }
 
@@ -240,13 +282,13 @@ async function claimLead(req, res, next) {
       where: { id: parseInt(id) },
       data: {
         claimedBy,
-        claimedAt: new Date()
-      }
+        claimedAt: new Date(),
+      },
     });
 
     return res.status(200).json({
       success: true,
-      lead: updatedLead
+      lead: updatedLead,
     });
   } catch (error) {
     next(error);
@@ -264,7 +306,7 @@ async function addNote(req, res, next) {
     if (!note) {
       return res.status(400).json({
         success: false,
-        message: 'Note content is required.'
+        message: "Note content is required.",
       });
     }
 
@@ -272,13 +314,13 @@ async function addNote(req, res, next) {
       data: {
         leadId: parseInt(id),
         note,
-        author: author || 'System'
-      }
+        author: author || "System",
+      },
     });
 
     return res.status(201).json({
       success: true,
-      data: leadNote
+      data: leadNote,
     });
   } catch (error) {
     next(error);
@@ -292,24 +334,27 @@ async function triggerTestNotification(req, res, next) {
   try {
     // Find latest lead to test notification
     const latestLead = await prisma.lead.findFirst({
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: "desc" },
     });
 
     if (!latestLead) {
       return res.status(404).json({
         success: false,
-        message: 'No leads found in database. Run collect or send a webhook lead first.'
+        message:
+          "No leads found in database. Run collect or send a webhook lead first.",
       });
     }
 
-    console.log(`Sending test notification for Lead ID: ${latestLead.indiamartLeadId}`);
+    console.log(
+      `Sending test notification for Lead ID: ${latestLead.indiamartLeadId}`,
+    );
     await sendLeadNotification(latestLead);
 
     return res.status(200).json({
       success: true,
-      message: 'Test notification triggered. Check server logs.',
+      message: "Test notification triggered. Check server logs.",
       leadId: latestLead.id,
-      indiamartLeadId: latestLead.indiamartLeadId
+      indiamartLeadId: latestLead.indiamartLeadId,
     });
   } catch (error) {
     next(error);
@@ -324,5 +369,5 @@ module.exports = {
   updateStatus,
   claimLead,
   addNote,
-  triggerTestNotification
+  triggerTestNotification,
 };
