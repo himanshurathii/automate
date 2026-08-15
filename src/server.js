@@ -15,6 +15,7 @@ async function seedDefaultRules() {
       console.log('No priority rules found. Seeding default priority rules...');
       
       const defaultRules = [
+        // --- Bulk quantity: larger orders matter more in pharma distribution ---
         {
           ruleName: 'Bulk Quantity Filter',
           field: 'quantity',
@@ -23,22 +24,34 @@ async function seedDefaultRules() {
           weight: 10,
           active: true
         },
+
+        // --- Target product categories: EDIT these to match the client's actual catalog ---
         {
-          ruleName: 'Target Product: Solar Panels',
+          ruleName: 'Target Product: Generic Medicines',
           field: 'product',
           operator: 'contains',
-          value: 'Solar Panels',
+          value: 'generic medicine',
           weight: 6,
           active: true
         },
         {
-          ruleName: 'Target Product: Industrial Valves',
+          ruleName: 'Target Product: Pharmaceutical Tablets',
           field: 'product',
           operator: 'contains',
-          value: 'Industrial Valves',
+          value: 'tablets',
           weight: 6,
           active: true
         },
+        {
+          ruleName: 'Target Product: Surgical / Medical Supplies',
+          field: 'product',
+          operator: 'contains',
+          value: 'surgical',
+          weight: 6,
+          active: true
+        },
+
+        // --- Priority domestic cities: EDIT to match where the client actually ships fastest ---
         {
           ruleName: 'Tier 1 City: Mumbai',
           field: 'city',
@@ -55,6 +68,35 @@ async function seedDefaultRules() {
           weight: 4,
           active: true
         },
+
+        // --- Country exclusion ---
+        // There's no hard "reject" operator in this scoring engine, so exclusion works
+        // via a strongly negative weight that forces the score below the low-priority
+        // threshold, guaranteeing these leads are never marked high/medium even if they
+        // also match a positive rule above (e.g. bulk quantity).
+        //
+        // 'in' takes a comma-separated list of ISO country codes, matched against
+        // SENDER_COUNTRY_ISO from IndiaMART's payload (field: 'country' here).
+        //
+        // IMPORTANT: 'PK,CN' below is a PLACEHOLDER. Replace with the client's actual
+        // excluded country list before going live — medicine export restrictions are a
+        // compliance/legal decision, not a technical one, and must come from the client.
+        {
+          ruleName: 'Excluded Countries (confirm exact list with client before go-live)',
+          field: 'country',
+          operator: 'in',
+          value: 'PK,CN',
+          weight: -100,
+          active: true
+        },
+
+        // --- Spam filter ---
+        // Kept as requested. Realistic expectation: this only catches the literal word
+        // "spam" appearing in the buyer's message, which is rare in genuine spam/junk
+        // enquiries. It won't catch vague one-line messages, competitor probing, or
+        // clearly fake enquiries. Treat this as a minor extra signal, not a real spam
+        // filter — worth revisiting once you've seen a few weeks of real lead data and
+        // can spot actual junk patterns to filter on instead.
         {
           ruleName: 'Spam Filter',
           field: 'message',
@@ -68,7 +110,7 @@ async function seedDefaultRules() {
       await prisma.priorityRule.createMany({
         data: defaultRules
       });
-      console.log('Seeded 6 default priority rules.');
+      console.log(`Seeded ${defaultRules.length} default priority rules.`);
     }
   } catch (error) {
     console.error('Failed to seed default priority rules:', error.message);

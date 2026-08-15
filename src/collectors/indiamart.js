@@ -134,6 +134,7 @@ async function processIncomingLead(rawLeadEnvelope, source = 'push') {
   const email = rawLead.SENDER_EMAIL || null;
   const city = rawLead.SENDER_CITY || null;
   const state = rawLead.SENDER_STATE || null;
+  const country = rawLead.SENDER_COUNTRY_ISO || null;
   const message = rawLead.QUERY_MESSAGE || null;
   
   // Extract quantity if present or parse from message (e.g. Qty: 100 pcs)
@@ -156,6 +157,7 @@ async function processIncomingLead(rawLeadEnvelope, source = 'push') {
     email,
     city,
     state,
+    country,
     product,
     quantity,
     message
@@ -172,6 +174,7 @@ async function processIncomingLead(rawLeadEnvelope, source = 'push') {
       email,
       city,
       state,
+      country,
       product,
       quantity,
       message,
@@ -260,16 +263,21 @@ async function collectLeads() {
   const apiKey = process.env.INDIAMART_CRM_KEY;
 
   if (!apiKey) {
-    console.log('INDIAMART_CRM_KEY is not defined in .env. Running in SIMULATION MODE.');
-    const mocks = generateMockLeads();
-    console.log(`Generated ${mocks.length} mock leads for simulation.`);
-    
-    let newLeadsCount = 0;
-    for (const mock of mocks) {
-      const result = await processIncomingLead(mock, 'pull_backfill');
-      if (result.isNew) newLeadsCount++;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('INDIAMART_CRM_KEY is not defined in .env. Running in SIMULATION MODE (development only).');
+      const mocks = generateMockLeads();
+      console.log(`Generated ${mocks.length} mock leads for simulation.`);
+
+      let newLeadsCount = 0;
+      for (const mock of mocks) {
+        const result = await processIncomingLead(mock, 'pull_backfill');
+        if (result.isNew) newLeadsCount++;
+      }
+      return { count: mocks.length, newLeads: newLeadsCount, source: 'simulation' };
     }
-    return { count: mocks.length, newLeads: newLeadsCount, source: 'simulation' };
+
+    console.error('[CRITICAL] INDIAMART_CRM_KEY is not configured in production. Pull API reconciliation is NOT running — this is the backup safety net for missed leads, and it is currently doing nothing.');
+    return { count: 0, newLeads: 0, source: 'error', error: 'Missing INDIAMART_CRM_KEY in production environment' };
   }
 
   try {

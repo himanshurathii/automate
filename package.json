@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "build": "prisma generate --schema=src/prisma/schema.prisma && prisma migrate deploy --schema=src/prisma/schema.prisma",
     "db:push": "prisma db push --schema=src/prisma/schema.prisma",
     "db:studio": "prisma studio --schema=src/prisma/schema.prisma"
   },
