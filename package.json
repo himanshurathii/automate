@@ -20,7 +20,7 @@
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.0",
     "morgan": "^1.10.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.0.9",
     "twilio": "^5.0.4"
   },
   "devDependencies": {
